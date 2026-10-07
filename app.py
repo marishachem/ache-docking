@@ -3,27 +3,56 @@ import streamlit.components.v1 as components
 import tempfile, os
 from pathlib import Path
 
-st.set_page_config(page_title="AChE Docking", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="Protein–Ligand Docking", page_icon="🔬", layout="wide")
 
-# ── Molecules ──────────────────────────────────────────────────────────────────
-MOLECULES = {
-    "🎓 Diploma molecule (piperidinone)": "O=C1N(c2ccc(OC)cc2)C(c2ccccc2)(C(=O)OCC)C(CC(=O)OCC)CC1c1ccccc1",
-    "💊 Donepezil (reference drug)":      "O=C(Cc1ccc(OC)c(OC)c1)N1CCC(Cc2ccccc2)CC1",
-    "💊 Rivastigmine":                     "CCN(C)C(=O)Oc1cccc(C(C)N(C)CC)c1",
-    "💊 Galantamine":                      "O=C1c2cccc3c2[C@@H]1NC[C@H]3O",
+# ── Per-target molecules ───────────────────────────────────────────────────────
+TARGET_MOLECULES = {
+    "AChE — Acetylcholinesterase (Alzheimer's)": {
+        "🎓 Diploma molecule (piperidinone)": "O=C1N(c2ccc(OC)cc2)C(c2ccccc2)(C(=O)OCC)C(CC(=O)OCC)CC1c1ccccc1",
+        "💊 Donepezil (reference drug)":      "O=C(Cc1ccc(OC)c(OC)c1)N1CCC(Cc2ccccc2)CC1",
+        "💊 Rivastigmine":                     "CCN(C)C(=O)Oc1cccc(C(C)N(C)CC)c1",
+        "💊 Galantamine":                      "COc1ccc2c(c1)C[C@H]1[C@@H](O)CC[N@@+]3(C)CC=C[C@@H]1[C@@H]23",
+    },
+    "EGFR — Epidermal Growth Factor Receptor (Cancer)": {
+        "💊 Gefitinib (1st gen)":   "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "💊 Erlotinib (1st gen)":   "C#Cc1cccc(Nc2ncnc3cc(OCCO)c(OC)cc23)c1",
+        "💊 Lapatinib (2nd gen)":   "CS(=O)(=O)CCNCc1ccc(-c2ccc3ncnc(Nc4ccc(OCc5cccc(F)c5)c(Cl)c4)c3c2)o1",
+        "💊 Osimertinib (3rd gen)": "C=CC(=O)Nc1cc2c(Nc3ccc(F)c(NC(=O)/C=C/CN(C)C)c3)ncnc2cc1N(C)CCN1CCOCC1",
+    },
+}
+
+TARGET_PROTEIN_PDB = {
+    "AChE — Acetylcholinesterase (Alzheimer's)": "data/protein_clean.pdb",
+    "EGFR — Epidermal Growth Factor Receptor (Cancer)": "data/egfr_clean.pdb",
+}
+
+TARGET_DESCRIPTIONS = {
+    "AChE — Acetylcholinesterase (Alzheimer's)": (
+        "Docking into **Acetylcholinesterase** (PDB: 1EVE), the Alzheimer's drug target. "
+        "The diploma molecule is a piperidine-2-one derivative synthesised during a chemistry "
+        "degree — structurally related to donepezil, the approved AChE inhibitor."
+    ),
+    "EGFR — Epidermal Growth Factor Receptor (Cancer)": (
+        "Docking into **EGFR kinase domain** (PDB: 1M17), a key cancer drug target. "
+        "EGFR mutations drive lung, breast and colorectal cancers. The three generations of "
+        "approved inhibitors (gefitinib → osimertinib) show how drug resistance shapes drug design."
+    ),
 }
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🔬 AChE Docking")
-    st.caption("Acetylcholinesterase · PDB: 1EVE")
+    st.title("🔬 Docking Lab")
     st.divider()
 
+    target = st.selectbox("Target protein", list(TARGET_MOLECULES.keys()))
+    molecules = TARGET_MOLECULES[target]
+
+    st.divider()
     mode = st.radio("Input mode", ["Preset molecules", "Custom SMILES"])
     if mode == "Preset molecules":
-        selected = st.selectbox("Choose molecule", list(MOLECULES.keys()))
-        smiles = MOLECULES[selected]
-        mol_name = selected.split("(")[0].strip()
+        selected = st.selectbox("Choose molecule", list(molecules.keys()))
+        smiles = molecules[selected]
+        mol_name = selected.split("(")[0].strip().lstrip("💊🎓").strip()
     else:
         smiles = st.text_area("SMILES", placeholder="Paste SMILES here…", height=100)
         mol_name = "Custom molecule"
@@ -39,31 +68,25 @@ with st.sidebar:
     run_btn = st.button("▶ Run Docking", type="primary", use_container_width=True)
 
     st.divider()
-    st.caption("**How to set up (first time):**")
+    st.caption("**First-time setup:**")
     st.code("python3 setup_protein.py\npip install -r requirements.txt", language="bash")
 
 # ── Main area ──────────────────────────────────────────────────────────────────
-st.title("Protein–Ligand Docking: AChE")
-st.markdown(
-    "Docking small molecules into **Acetylcholinesterase** (PDB: 1EVE), "
-    "the Alzheimer's drug target. The diploma molecule is a piperidine-2-one "
-    "derivative synthesised during a chemistry degree — structurally related "
-    "to donepezil, the approved AChE inhibitor."
-)
+st.title("Protein–Ligand Docking")
+st.markdown(TARGET_DESCRIPTIONS[target])
 
 if not smiles:
     st.info("Select a molecule in the sidebar and click **Run Docking**.")
     st.stop()
 
-# ── Show 2D structure ──────────────────────────────────────────────────────────
+# ── 2D structure + properties ──────────────────────────────────────────────────
 col1, col2 = st.columns([1, 2])
 with col1:
     st.subheader("2D Structure")
     try:
         from rdkit import Chem
-        from rdkit.Chem import Draw
         from rdkit.Chem.Draw import rdMolDraw2D
-        import base64, re
+        import base64
 
         mol = Chem.MolFromSmiles(smiles)
         if mol:
@@ -112,8 +135,10 @@ st.divider()
 
 # ── Docking ────────────────────────────────────────────────────────────────────
 if run_btn:
-    if not Path("data/protein_ready.pdbqt").exists():
-        st.error("Protein not prepared. Run `python3 setup_protein.py` first.")
+    from utils.docking import TARGETS
+    receptor = TARGETS[target]["receptor"]
+    if not Path(receptor).exists():
+        st.error(f"Receptor not prepared: `{receptor}`. Run `python3 setup_protein.py` first.")
         st.stop()
 
     with st.spinner("Preparing ligand…"):
@@ -129,7 +154,8 @@ if run_btn:
         try:
             from utils.docking import run_docking, read_pdbqt
             out_pdbqt = str(Path(tempfile.mkdtemp()) / "docked.pdbqt")
-            energies = run_docking(lig_pdbqt, out_pdbqt, exhaustiveness, n_poses)
+            energies = run_docking(lig_pdbqt, out_pdbqt, target=target,
+                                   exhaustiveness=exhaustiveness, n_poses=n_poses)
             docked_str = read_pdbqt(out_pdbqt)
             st.session_state["docked"] = {
                 "energies": energies,
@@ -138,6 +164,7 @@ if run_btn:
                 "out_pdbqt": out_pdbqt,
                 "name": mol_name,
                 "smiles": smiles,
+                "target": target,
             }
         except Exception as e:
             st.error(f"Docking failed: {e}")
@@ -149,17 +176,15 @@ if "docked" not in st.session_state:
 
 d = st.session_state["docked"]
 energies = d["energies"]
+best = energies[0]
 
 st.subheader(f"Results — {d['name']}")
 
-# Score summary
-best = energies[0]
 col_a, col_b, col_c = st.columns(3)
 col_a.metric("Best binding energy", f"{best} kcal/mol",
              help="More negative = stronger binding")
 col_b.metric("Poses found", len(energies))
-col_c.metric("vs. Donepezil", "",
-             help="Run donepezil to compare")
+col_c.metric("Target", d["target"].split("—")[0].strip())
 
 tab1, tab2, tab3 = st.tabs(["🧬 3D Viewer", "📊 Score Comparison", "🔗 Interactions"])
 
@@ -167,7 +192,8 @@ tab1, tab2, tab3 = st.tabs(["🧬 3D Viewer", "📊 Score Comparison", "🔗 Int
 with tab1:
     st.caption("Protein = light blue cartoon · Your molecule = green sticks")
     try:
-        with open("data/protein_ready.pdb") as f:
+        protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
+        with open(protein_pdb_path) as f:
             protein_str = f.read()
 
         viewer_html = f"""
@@ -197,17 +223,17 @@ with tab1:
 with tab2:
     st.caption("Add more molecules via sidebar to compare scores.")
 
-    if "all_scores" not in st.session_state:
-        st.session_state["all_scores"] = {}
-    st.session_state["all_scores"][d["name"]] = best
+    score_key = f"all_scores_{d['target']}"
+    if score_key not in st.session_state:
+        st.session_state[score_key] = {}
+    st.session_state[score_key][d["name"]] = best
 
-    if len(st.session_state["all_scores"]) >= 1:
-        try:
-            from utils.analysis import score_chart
-            img = score_chart(st.session_state["all_scores"])
-            st.image(img, use_container_width=True)
-        except Exception as e:
-            st.error(f"Chart error: {e}")
+    try:
+        from utils.analysis import score_chart
+        img = score_chart(st.session_state[score_key])
+        st.image(img, use_container_width=True)
+    except Exception as e:
+        st.error(f"Chart error: {e}")
 
     st.subheader("All poses")
     import pandas as pd
@@ -222,8 +248,9 @@ with tab3:
     st.caption("Protein–ligand interactions (requires MDAnalysis + ProLIF)")
     try:
         from utils.analysis import get_interactions
+        protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
         with st.spinner("Calculating interactions…"):
-            idf = get_interactions("data/protein_ready.pdb", d["out_pdbqt"])
+            idf = get_interactions(protein_pdb_path, d["out_pdbqt"])
         if idf is not None and not idf.empty:
             st.dataframe(idf, use_container_width=True)
         else:
