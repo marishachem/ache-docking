@@ -252,6 +252,37 @@ with tab2:
 # ── Tab 3: Interactions ────────────────────────────────────────────────────────
 with tab3:
     st.caption("Hydrogen bonds, hydrophobic contacts, π-stacking and more")
+
+    # 3D viewer
+    try:
+        protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
+        with open(protein_pdb_path) as f:
+            protein_str = f.read()
+        viewer_html = f"""
+        <html><head>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
+        <style>body{{margin:0;background:#0f1320;}}#viewer{{width:100%;height:420px;}}</style>
+        </head><body>
+        <div id="viewer"></div>
+        <script>
+        let viewer = $3Dmol.createViewer('viewer', {{backgroundColor:'#0f1320'}});
+        viewer.addModel(`{protein_str.replace("`","'")}`, 'pdb');
+        viewer.setStyle({{model:0}}, {{cartoon:{{color:'#90cdf4', opacity:0.85}}}});
+        viewer.addModel(`{d["pdbqt"].replace("`","'")}`, 'pdbqt');
+        viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.3}}}});
+        viewer.addSurface($3Dmol.SurfaceType.VDW, {{opacity:0.12, color:'#a78bfa'}}, {{model:0}});
+        viewer.zoomTo({{model:1}});
+        viewer.render();
+        </script>
+        </body></html>
+        """
+        components.html(viewer_html, height=430)
+    except Exception as e:
+        st.error(f"3D viewer error: {e}")
+
+    st.divider()
+
+    # Interaction diagram
     try:
         from utils.analysis import get_interactions, interaction_chart
         h_pdb = TARGET_PROTEIN_H_PDB[d["target"]]
