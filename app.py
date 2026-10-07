@@ -26,6 +26,12 @@ TARGET_PROTEIN_PDB = {
     "EGFR — Epidermal Growth Factor Receptor (Cancer)": "data/egfr_clean.pdb",
 }
 
+# Hydrogenated PDBs needed for ProLIF interaction detection
+TARGET_PROTEIN_H_PDB = {
+    "AChE — Acetylcholinesterase (Alzheimer's)": "data/protein_ready.pdb",
+    "EGFR — Epidermal Growth Factor Receptor (Cancer)": "data/egfr_ready.pdb",
+}
+
 TARGET_DESCRIPTIONS = {
     "AChE — Acetylcholinesterase (Alzheimer's)": (
         "Docking into **Acetylcholinesterase** (PDB: 1EVE), the Alzheimer's drug target. "
@@ -245,16 +251,16 @@ with tab2:
 
 # ── Tab 3: Interactions ────────────────────────────────────────────────────────
 with tab3:
-    st.caption("Protein–ligand interactions (requires MDAnalysis + ProLIF)")
+    st.caption("Protein–ligand interactions (hydrogen bonds, hydrophobic contacts, π-stacking)")
     try:
         from utils.analysis import get_interactions
-        protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
+        h_pdb = TARGET_PROTEIN_H_PDB[d["target"]]
         with st.spinner("Calculating interactions…"):
-            idf = get_interactions(protein_pdb_path, d["out_pdbqt"])
+            idf = get_interactions(h_pdb, d["out_pdbqt"], smiles=d["smiles"])
         if idf is not None and not idf.empty:
-            st.dataframe(idf, use_container_width=True)
+            st.dataframe(idf, use_container_width=True, hide_index=True)
+            st.caption(f"{len(idf)} interactions detected")
         else:
-            st.info("No interactions detected or ProLIF/MDAnalysis not installed.\n\n"
-                    "Install with: `pip install prolif MDAnalysis`")
+            st.info("No interactions detected in the docked pose.")
     except Exception as e:
-        st.info(f"ProLIF not available: {e}\n\nInstall with: `pip install prolif MDAnalysis`")
+        st.error(f"Interaction analysis failed: {e}")

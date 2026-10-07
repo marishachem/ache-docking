@@ -41,20 +41,50 @@ def score_chart(scores: dict[str, float]) -> bytes:
     return buf.read()
 
 
-def get_interactions(protein_pdb: str, ligand_pdbqt: str) -> pd.DataFrame | None:
+def get_interactions(protein_pdb: str, ligand_pdbqt: str, smiles: str = None) -> pd.DataFrame | None:
     try:
-        import MDAnalysis as mda
-        import prolif as plf
+        import warnings, MDAnalysis as mda, prolif as plf
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+        warnings.filterwarnings("ignore")
 
-        u = mda.Universe(protein_pdb)
-        lig = mda.Universe(ligand_pdbqt)
-
+        # Load protein (needs hydrogens — use protein_ready.pdb)
+        u = mda.Universe(protein_pdb, guess_bonds=False)
+        u.guess_TopologyAttrs(to_guess=["elements", "bonds"])
         protein_mol = plf.Molecule.from_mda(u.select_atoms("protein"))
-        ligand_mol  = plf.Molecule.from_mda(lig.atoms)
+
+        # Build ligand from SMILES + docked coordinates from PDBQT
+        if smiles:
+            coords = []
+            with open(ligand_pdbqt) as f:
+                for line in f:
+                    if line.startswith(("ATOM", "HETATM")):
+                        coords.append((float(line[30:38]), float(line[38:46]), float(line[46:54])))
+                    elif line.startswith("ENDMDL"):
+                        break
+            mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+            AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+            AllChem.MMFFOptimizeMolecule(mol)
+            conf = mol.GetConformer()
+            heavy_idx = [i for i, a in enumerate(mol.GetAtoms()) if a.GetAtomicNum() != 1]
+            for i, xyz in zip(heavy_idx[:len(coords)], coords):
+                conf.SetAtomPosition(i, xyz)
+            ligand_mol = plf.Molecule.from_rdkit(mol)
+        else:
+            lig_u = mda.Universe(ligand_pdbqt, guess_bonds=False)
+            lig_u.guess_TopologyAttrs(to_guess=["elements", "bonds"])
+            ligand_mol = plf.Molecule.from_mda(lig_u.atoms, inferrer=None)
 
         fp = plf.Fingerprint()
         fp.run_from_iterable([ligand_mol], protein_mol)
         df = fp.to_dataframe()
-        return df
-    except Exception:
-        return None
+
+        # Flatten multi-level columns to readable strings
+        rows = []
+        for col in df.columns:
+            residue, interaction = col[1], col[2]
+            if df[col].iloc[0]:
+                rows.append({"Residue": residue, "Interaction": interaction})
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+    except Exception as e:
+        raise e
