@@ -79,7 +79,6 @@ def get_interactions(protein_pdb: str, ligand_pdbqt: str, smiles: str = None) ->
         fp.run_from_iterable([ligand_mol], protein_mol)
         df = fp.to_dataframe()
 
-        # Flatten multi-level columns to readable strings
         rows = []
         for col in df.columns:
             residue, interaction = col[1], col[2]
@@ -88,3 +87,72 @@ def get_interactions(protein_pdb: str, ligand_pdbqt: str, smiles: str = None) ->
         return pd.DataFrame(rows) if rows else pd.DataFrame()
     except Exception as e:
         raise e
+
+
+INTERACTION_COLORS = {
+    "HBDonor":      "#60a5fa",
+    "HBAcceptor":   "#34d399",
+    "Hydrophobic":  "#fbbf24",
+    "PiStacking":   "#a78bfa",
+    "PiCation":     "#f472b6",
+    "CationPi":     "#f472b6",
+    "Anionic":      "#f87171",
+    "Cationic":     "#fb923c",
+    "VdWContact":   "#94a3b8",
+    "EdgeToFace":   "#c084fc",
+    "FaceToFace":   "#818cf8",
+}
+
+
+def interaction_chart(idf: pd.DataFrame) -> bytes:
+    """Dot-matrix chart: residues (y) × interaction types (x), colored by type."""
+    if idf is None or idf.empty:
+        return b""
+
+    residues = idf["Residue"].unique().tolist()
+    inter_types = idf["Interaction"].unique().tolist()
+
+    fig, ax = plt.subplots(figsize=(max(5, len(inter_types) * 1.1),
+                                    max(3, len(residues) * 0.45 + 1.5)))
+    fig.patch.set_facecolor("#0f1320")
+    ax.set_facecolor("#0f1320")
+
+    for yi, res in enumerate(residues):
+        res_ints = idf[idf["Residue"] == res]["Interaction"].tolist()
+        for xi, itype in enumerate(inter_types):
+            if itype in res_ints:
+                color = INTERACTION_COLORS.get(itype, "#e2e8f0")
+                ax.scatter(xi, yi, s=220, color=color, zorder=3,
+                           linewidths=0.5, edgecolors="#1e293b")
+
+    ax.set_xticks(range(len(inter_types)))
+    ax.set_xticklabels(inter_types, rotation=35, ha="right",
+                       color="#e2e8f0", fontsize=9)
+    ax.set_yticks(range(len(residues)))
+    ax.set_yticklabels(residues, color="#e2e8f0", fontsize=9,
+                       fontfamily="monospace")
+    ax.set_xlim(-0.6, len(inter_types) - 0.4)
+    ax.set_ylim(-0.6, len(residues) - 0.4)
+    ax.tick_params(length=0)
+    ax.spines[:].set_color("#253060")
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, color="#1e293b", linewidth=0.8)
+    ax.xaxis.grid(True, color="#1e293b", linewidth=0.8)
+    ax.set_title("Protein–Ligand Interactions", color="#e2e8f0",
+                 fontsize=12, pad=10)
+
+    # Legend
+    seen = sorted(idf["Interaction"].unique())
+    patches = [mpatches.Patch(color=INTERACTION_COLORS.get(t, "#e2e8f0"), label=t)
+               for t in seen]
+    ax.legend(handles=patches, loc="upper left", bbox_to_anchor=(1.01, 1),
+              framealpha=0.15, labelcolor="#e2e8f0", fontsize=8,
+              facecolor="#1e293b", edgecolor="#253060")
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=140, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()

@@ -251,15 +251,17 @@ with tab2:
 
 # ── Tab 3: Interactions ────────────────────────────────────────────────────────
 with tab3:
-    st.caption("Protein–ligand interactions (hydrogen bonds, hydrophobic contacts, π-stacking)")
+    st.caption("Hydrogen bonds, hydrophobic contacts, π-stacking and more")
     try:
-        from utils.analysis import get_interactions
+        from utils.analysis import get_interactions, interaction_chart
         h_pdb = TARGET_PROTEIN_H_PDB[d["target"]]
         with st.spinner("Calculating interactions…"):
             idf = get_interactions(h_pdb, d["out_pdbqt"], smiles=d["smiles"])
         if idf is not None and not idf.empty:
-            st.dataframe(idf, use_container_width=True, hide_index=True)
-            st.caption(f"{len(idf)} interactions detected")
+            img = interaction_chart(idf)
+            st.image(img, use_container_width=True)
+            with st.expander(f"Raw data ({len(idf)} interactions)"):
+                st.dataframe(idf, use_container_width=True, hide_index=True)
         else:
             st.info("No interactions detected in the docked pose.")
     except Exception as e:
