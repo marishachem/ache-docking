@@ -8,7 +8,7 @@ The main molecule is a **piperidine-2-one derivative** synthesised during a chem
 
 - **AutoDock Vina** docking via Python API
 - **3D interactive viewer** — protein cartoon + ligand sticks + surface (3Dmol.js)
-- **Score comparison chart** — your molecule vs. donepezil, rivastigmine, galantamine
+- **Score comparison chart** — my molecule vs. donepezil, rivastigmine, galantamine
 - **Protein–ligand interaction table** — hydrogen bonds, hydrophobic contacts (ProLIF)
 - **Molecular properties** — MW, LogP, TPSA, Lipinski rule check
 - **Streamlit UI** — input any SMILES, get results in one click
