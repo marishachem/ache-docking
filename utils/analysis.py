@@ -51,7 +51,7 @@ def get_interactions(protein_pdb: str, ligand_pdbqt: str, smiles: str = None) ->
         # Load protein (needs hydrogens — use protein_ready.pdb)
         u = mda.Universe(protein_pdb, guess_bonds=False)
         u.guess_TopologyAttrs(to_guess=["elements", "bonds"])
-        protein_mol = plf.Molecule.from_mda(u.select_atoms("protein"))
+        protein_mol = plf.Molecule.from_mda(u.select_atoms("protein"), force=True)
 
         # Build ligand from SMILES + docked coordinates from PDBQT
         if smiles:

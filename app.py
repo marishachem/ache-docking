@@ -192,6 +192,62 @@ col_a.metric("Best binding energy", f"{best} kcal/mol",
 col_b.metric("Poses found", len(energies))
 col_c.metric("Target", d["target"].split("—")[0].strip())
 
+# ── Score interpretation ───────────────────────────────────────────────────────
+BENCHMARKS = {
+    "AChE — Acetylcholinesterase (Alzheimer's)": [
+        ("Donepezil", -10.49), ("Rivastigmine", -7.74), ("Galantamine", -7.70),
+    ],
+    "EGFR — Epidermal Growth Factor Receptor (Cancer)": [
+        ("Lapatinib", -8.40), ("Osimertinib", -8.11),
+        ("Gefitinib", -8.07), ("Erlotinib", -7.66),
+    ],
+}
+
+def score_label(score):
+    if score < -10:   return "🟢 Excellent", "Stronger than most approved drugs"
+    elif score < -8:  return "🟢 Very good", "Comparable to approved drugs"
+    elif score < -6:  return "🟡 Moderate",  "Promising hit, worth optimizing"
+    elif score < -4:  return "🟠 Weak",       "Some affinity, unlikely to be active"
+    else:             return "🔴 Poor",        "Essentially no binding"
+
+label, desc = score_label(best)
+benchmarks = BENCHMARKS.get(d["target"], [])
+best_ref = min(benchmarks, key=lambda x: x[1])[1] if benchmarks else None
+worst_ref = max(benchmarks, key=lambda x: x[1])[1] if benchmarks else None
+
+with st.expander("📖 How to read this score", expanded=True):
+    ic1, ic2 = st.columns([1, 2])
+    with ic1:
+        st.markdown(f"**Your score:** `{best} kcal/mol`")
+        st.markdown(f"**Rating:** {label}")
+        st.markdown(f"*{desc}*")
+        if benchmarks:
+            diff = best - worst_ref
+            sign = "better" if diff < 0 else "weaker"
+            st.markdown(f"**vs. weakest ref drug ({worst_ref}):** {abs(diff):.2f} kcal/mol {sign}")
+    with ic2:
+        st.markdown("**Reference scale:**")
+        scale_rows = [
+            ("< −10",  "🟢", "Excellent — stronger than most approved drugs"),
+            ("−8 to −10", "🟢", "Very good — comparable to approved drugs"),
+            ("−6 to −8", "🟡", "Moderate — promising, worth optimizing"),
+            ("−4 to −6", "🟠", "Weak — unlikely to be active"),
+            ("> −4",   "🔴", "Poor — essentially no binding"),
+        ]
+        for rng, dot, meaning in scale_rows:
+            marker = "◀ **your score**" if (
+                (rng == "< −10" and best < -10) or
+                (rng == "−8 to −10" and -10 <= best < -8) or
+                (rng == "−6 to −8" and -8 <= best < -6) or
+                (rng == "−4 to −6" and -6 <= best < -4) or
+                (rng == "> −4" and best >= -4)
+            ) else ""
+            st.markdown(f"{dot} `{rng}` — {meaning} {marker}")
+        if benchmarks:
+            st.markdown("**Approved drugs on this target:**")
+            for name, score in benchmarks:
+                st.markdown(f"- {name}: `{score}` kcal/mol")
+
 tab1, tab2, tab3 = st.tabs(["🧬 3D Viewer", "📊 Score Comparison", "🔗 Interactions"])
 
 # ── Tab 1: 3D Viewer ───────────────────────────────────────────────────────────
@@ -205,16 +261,16 @@ with tab1:
         viewer_html = f"""
         <html><head>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
-        <style>body{{margin:0;background:#0f1320;}}#viewer{{width:100%;height:520px;}}</style>
+        <style>body{{margin:0;background:#e8edf5;}}#v1{{width:100%;height:520px;}}</style>
         </head><body>
-        <div id="viewer"></div>
+        <div id="v1"></div>
         <script>
-        let viewer = $3Dmol.createViewer('viewer', {{backgroundColor:'#0f1320'}});
+        let viewer = $3Dmol.createViewer('v1', {{backgroundColor:'#e8edf5'}});
         viewer.addModel(`{protein_str.replace("`","'")}`, 'pdb');
-        viewer.setStyle({{model:0}}, {{cartoon:{{color:'#90cdf4', opacity:0.85}}}});
+        viewer.setStyle({{model:0}}, {{cartoon:{{color:'spectrum'}}}});
         viewer.addModel(`{d["pdbqt"].replace("`","'")}`, 'pdbqt');
-        viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.25}}}});
-        viewer.addSurface($3Dmol.SurfaceType.VDW, {{opacity:0.12, color:'#a78bfa'}},
+        viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.3}}}});
+        viewer.addSurface($3Dmol.SurfaceType.VDW, {{opacity:0.08, color:'white'}},
                           {{model:0}});
         viewer.zoomTo({{model:1}});
         viewer.render();
@@ -253,41 +309,73 @@ with tab2:
 with tab3:
     st.caption("Hydrogen bonds, hydrophobic contacts, π-stacking and more")
 
-    # 3D viewer
     try:
-        protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
-        with open(protein_pdb_path) as f:
-            protein_str = f.read()
-        viewer_html = f"""
-        <html><head>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
-        <style>body{{margin:0;background:#0f1320;}}#viewer{{width:100%;height:420px;}}</style>
-        </head><body>
-        <div id="viewer"></div>
-        <script>
-        let viewer = $3Dmol.createViewer('viewer', {{backgroundColor:'#0f1320'}});
-        viewer.addModel(`{protein_str.replace("`","'")}`, 'pdb');
-        viewer.setStyle({{model:0}}, {{cartoon:{{color:'#90cdf4', opacity:0.85}}}});
-        viewer.addModel(`{d["pdbqt"].replace("`","'")}`, 'pdbqt');
-        viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.3}}}});
-        viewer.addSurface($3Dmol.SurfaceType.VDW, {{opacity:0.12, color:'#a78bfa'}}, {{model:0}});
-        viewer.zoomTo({{model:1}});
-        viewer.render();
-        </script>
-        </body></html>
-        """
-        components.html(viewer_html, height=430)
-    except Exception as e:
-        st.error(f"3D viewer error: {e}")
-
-    st.divider()
-
-    # Interaction diagram
-    try:
+        import re
         from utils.analysis import get_interactions, interaction_chart
+
         h_pdb = TARGET_PROTEIN_H_PDB[d["target"]]
         with st.spinner("Calculating interactions…"):
             idf = get_interactions(h_pdb, d["out_pdbqt"], smiles=d["smiles"])
+
+        # ── 3D viewer: faint protein + interacting residues highlighted ────────
+        protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
+        with open(protein_pdb_path) as f:
+            protein_str = f.read()
+
+        # Parse residues like "TRP83.A" → {resi: 83, chain: "A"}
+        resi_js = "[]"
+        itype_colors = {
+            "HBDonor": "#60a5fa", "HBAcceptor": "#34d399",
+            "Hydrophobic": "#fbbf24", "PiStacking": "#a78bfa",
+            "PiCation": "#f472b6", "CationPi": "#f472b6",
+            "VdWContact": "#94a3b8", "EdgeToFace": "#c084fc",
+        }
+        if idf is not None and not idf.empty:
+            resi_list = []
+            for _, row in idf.iterrows():
+                m = re.match(r'[A-Z]+(\d+)\.(\w+)', row["Residue"])
+                if m:
+                    color = itype_colors.get(row["Interaction"], "#fb923c")
+                    resi_list.append(
+                        f'{{resi:{m.group(1)},chain:"{m.group(2)}",color:"{color}",label:"{row["Residue"]}"}}'
+                    )
+            resi_js = "[" + ",".join(resi_list) + "]"
+
+        viewer_html3 = f"""
+        <html><head>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
+        <style>body{{margin:0;background:#f1f5f9;}}#v3{{width:100%;height:440px;}}</style>
+        </head><body><div id="v3"></div>
+        <script>
+        setTimeout(function() {{
+            let viewer = $3Dmol.createViewer('v3', {{backgroundColor:'#f1f5f9'}});
+            viewer.addModel(`{protein_str.replace("`","'")}`, 'pdb');
+            // faint grey cartoon for full protein
+            viewer.setStyle({{model:0}}, {{cartoon:{{color:'#c8d0dc', opacity:0.5}}}});
+            // highlight each interacting residue with its interaction color
+            let residues = {resi_js};
+            residues.forEach(r => {{
+                viewer.addStyle({{model:0, resi:r.resi, chain:r.chain}},
+                    {{stick:{{color:r.color, radius:0.22}},
+                     cartoon:{{color:r.color, opacity:0.9}}}});
+                viewer.addLabel(r.label, {{
+                    position:{{resi:r.resi, chain:r.chain}},
+                    backgroundColor:'rgba(0,0,0,0.55)', fontColor:'white',
+                    fontSize:10, borderRadius:3
+                }});
+            }});
+            // ligand
+            viewer.addModel(`{d["pdbqt"].replace("`","'")}`, 'pdbqt');
+            viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.32}}}});
+            viewer.zoomTo({{model:1}});
+            viewer.render();
+        }}, 150);
+        </script></body></html>
+        """
+        components.html(viewer_html3, height=450)
+
+        st.divider()
+
         if idf is not None and not idf.empty:
             img = interaction_chart(idf)
             st.image(img, use_container_width=True)
@@ -295,5 +383,6 @@ with tab3:
                 st.dataframe(idf, use_container_width=True, hide_index=True)
         else:
             st.info("No interactions detected in the docked pose.")
+
     except Exception as e:
         st.error(f"Interaction analysis failed: {e}")
