@@ -67,10 +67,12 @@ def convert_to_pdbqt():
         print("protein_ready.pdbqt already exists, skipping.")
         return
     print("Converting protein to PDBQT...")
+    import shutil
+    mk = shutil.which("mk_prepare_receptor.py") or \
+         "/opt/homebrew/Caskroom/miniforge/base/envs/docking/bin/mk_prepare_receptor.py"
     result = subprocess.run(
-        ["mk_prepare_receptor.py", "-i", str(DATA / "protein_ready.pdb"),
-         "-o", str(out), "--box_center", "-0.3", "16.0", "-27.0",
-         "--box_size", "25", "25", "25"],
+        [mk, "-i", str(DATA / "protein_clean.pdb"),
+         "-a", "--compute_charges", "-p", str(out)],
         capture_output=True, text=True
     )
     if result.returncode != 0:

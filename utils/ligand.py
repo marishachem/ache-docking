@@ -1,11 +1,11 @@
-import subprocess
-import tempfile
 from pathlib import Path
 from rdkit import Chem
 from rdkit.Chem import AllChem, Descriptors
 
 
 def smiles_to_pdbqt(smiles: str, out_path: str) -> bool:
+    from meeko import MoleculePreparation, PDBQTWriterLegacy
+
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError(f"Invalid SMILES: {smiles}")
@@ -17,18 +17,12 @@ def smiles_to_pdbqt(smiles: str, out_path: str) -> bool:
         raise RuntimeError("3D embedding failed")
     AllChem.MMFFOptimizeMolecule(mol)
 
-    with tempfile.NamedTemporaryFile(suffix=".sdf", delete=False) as f:
-        sdf_path = f.name
-    Chem.MolToMolFile(mol, sdf_path)
+    preparator = MoleculePreparation()
+    mol_setups = preparator.prepare(mol)
+    pdbqt_string, _, _ = PDBQTWriterLegacy.write_string(mol_setups[0])
 
-    result = subprocess.run(
-        ["mk_prepare_ligand.py", "-i", sdf_path, "-o", out_path],
-        capture_output=True, text=True
-    )
-    Path(sdf_path).unlink(missing_ok=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"mk_prepare_ligand.py failed:\n{result.stderr}")
+    with open(out_path, "w") as f:
+        f.write(pdbqt_string)
     return True
 
 

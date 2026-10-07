@@ -1,8 +1,8 @@
 from pathlib import Path
 from vina import Vina
 
-# AChE active site center (from 1EVE donepezil pose)
-BOX_CENTER = [-0.3, 16.0, -27.0]
+# AChE active site center (E20 donepezil centroid from 1EVE crystal structure)
+BOX_CENTER = [2.8, 64.4, 68.0]
 BOX_SIZE   = [25.0, 25.0, 25.0]
 RECEPTOR   = Path("data/protein_ready.pdbqt")
 
