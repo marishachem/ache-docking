@@ -6,6 +6,43 @@ import io
 import pandas as pd
 
 
+def selectivity_chart(scores: dict[str, float], primary_target: str) -> bytes:
+    """Bar chart for selectivity panel. primary target highlighted in teal, off-targets in grey."""
+    names = list(scores.keys())
+    vals  = list(scores.values())
+    short = [n.split("—")[0].strip() for n in names]
+    colors = ["#14b8a6" if n == primary_target else "#64748b" for n in names]
+
+    fig, ax = plt.subplots(figsize=(max(5, len(names) * 1.6), 4))
+    fig.patch.set_facecolor("#0f1320")
+    ax.set_facecolor("#1a2035")
+
+    bars = ax.barh(short, vals, color=colors, height=0.5, zorder=3)
+    ax.set_xlabel("Binding energy (kcal/mol)", color="#e2e8f0", fontsize=11)
+    ax.set_title("Selectivity Panel — lower score = stronger binding", color="#e2e8f0", fontsize=12, pad=10)
+    ax.tick_params(colors="#e2e8f0")
+    ax.spines[:].set_color("#253060")
+    ax.xaxis.grid(True, color="#253060", linestyle="--", alpha=0.5, zorder=0)
+    ax.invert_yaxis()
+
+    for bar, val in zip(bars, vals):
+        ax.text(val - 0.1, bar.get_y() + bar.get_height() / 2,
+                f"{val:.2f}", ha="right", va="center", color="white",
+                fontsize=10, fontweight="bold")
+
+    teal = mpatches.Patch(color="#14b8a6", label="Primary target")
+    grey = mpatches.Patch(color="#64748b", label="Off-target")
+    ax.legend(handles=[teal, grey], framealpha=0.15, labelcolor="#e2e8f0",
+              facecolor="#1e293b", edgecolor="#253060", fontsize=9)
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=140, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def score_chart(scores: dict[str, float]) -> bytes:
     """Bar chart comparing docking scores. scores = {name: kcal/mol}"""
     names = list(scores.keys())

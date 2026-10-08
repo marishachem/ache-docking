@@ -16,6 +16,27 @@ TARGETS = {
         "box_size":   [25.0, 25.0, 25.0],
         "pdb_id": "1M17",
     },
+    "BuChE — Butyrylcholinesterase (AChE homolog)": {
+        "receptor": "data/buche_ready.pdbqt",
+        "protein_pdb": "data/buche_clean.pdb",
+        "box_center": [139.6, 116.1, 40.9],
+        "box_size":   [25.0, 25.0, 25.0],
+        "pdb_id": "4BDS",
+    },
+    "COX-2 — Cyclooxygenase-2 (off-target)": {
+        "receptor": "data/cox2_ready.pdbqt",
+        "protein_pdb": "data/cox2_clean.pdb",
+        "box_center": [165.4, 203.3, 205.5],
+        "box_size":   [25.0, 25.0, 25.0],
+        "pdb_id": "5IKT",
+    },
+    "VEGFR2 — Vascular Endothelial Growth Factor Receptor (kinase off-target)": {
+        "receptor": "data/vegfr2_ready.pdbqt",
+        "protein_pdb": "data/vegfr2_clean.pdb",
+        "box_center": [-24.6, -0.4, -10.9],
+        "box_size":   [25.0, 25.0, 25.0],
+        "pdb_id": "4ASD",
+    },
 }
 
 

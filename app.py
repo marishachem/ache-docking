@@ -257,25 +257,55 @@ if run_btn:
             st.error(f"Ligand preparation failed: {e}")
             st.stop()
 
-    with st.spinner("Running AutoDock Vina… (this takes ~30–60s)"):
+    # ── Docking with live progress bar ────────────────────────────────────────
+    import threading, time
+    from utils.docking import run_docking, read_pdbqt
+
+    out_pdbqt = str(Path(tempfile.mkdtemp()) / "docked.pdbqt")
+    _result = {}
+
+    def _dock():
         try:
-            from utils.docking import run_docking, read_pdbqt
-            out_pdbqt = str(Path(tempfile.mkdtemp()) / "docked.pdbqt")
-            energies = run_docking(lig_pdbqt, out_pdbqt, target=target,
-                                   exhaustiveness=exhaustiveness, n_poses=n_poses)
-            docked_str = read_pdbqt(out_pdbqt)
-            st.session_state["docked"] = {
-                "energies": energies,
-                "pdbqt": docked_str,
-                "lig_pdbqt": lig_pdbqt,
-                "out_pdbqt": out_pdbqt,
-                "name": mol_name,
-                "smiles": smiles,
-                "target": target,
-            }
+            _result["energies"] = run_docking(
+                lig_pdbqt, out_pdbqt, target=target,
+                exhaustiveness=exhaustiveness, n_poses=n_poses
+            )
         except Exception as e:
-            st.error(f"Docking failed: {e}")
-            st.stop()
+            _result["error"] = str(e)
+
+    thread = threading.Thread(target=_dock)
+    thread.start()
+
+    estimated = max(15, exhaustiveness * 4)
+    bar   = st.progress(0, text="⚗️ AutoDock Vina running…")
+    clock = st.empty()
+    t0 = time.time()
+
+    while thread.is_alive():
+        time.sleep(0.4)
+        elapsed = time.time() - t0
+        pct = min(int(elapsed / estimated * 100), 95)
+        bar.progress(pct, text=f"⚗️ AutoDock Vina running… {elapsed:.0f}s")
+        clock.caption(f"Exhaustiveness={exhaustiveness} · estimated ~{estimated}s")
+
+    thread.join()
+    bar.progress(100, text="✅ Docking complete!")
+    clock.empty()
+
+    if "error" in _result:
+        st.error(f"Docking failed: {_result['error']}")
+        st.stop()
+
+    docked_str = read_pdbqt(out_pdbqt)
+    st.session_state["docked"] = {
+        "energies": _result["energies"],
+        "pdbqt": docked_str,
+        "lig_pdbqt": lig_pdbqt,
+        "out_pdbqt": out_pdbqt,
+        "name": mol_name,
+        "smiles": smiles,
+        "target": target,
+    }
 
 # ── Results ────────────────────────────────────────────────────────────────────
 if "docked" not in st.session_state:
@@ -346,7 +376,7 @@ with st.expander("📖 How to read this score", expanded=True):
             for name, score in benchmarks:
                 st.markdown(f"- {name}: `{score}` kcal/mol")
 
-tab1, tab2, tab3 = st.tabs(["🧬 3D Viewer", "📊 Score Comparison", "🔗 Interactions"])
+tab1, tab2, tab3, tab4 = st.tabs(["🧬 3D Viewer", "📊 Score Comparison", "🔗 Interactions", "🎯 Selectivity Panel"])
 
 # ── Tab 1: 3D Viewer ───────────────────────────────────────────────────────────
 with tab1:
@@ -470,3 +500,108 @@ with tab3:
 
     except Exception as e:
         st.error(f"Interaction analysis failed: {e}")
+
+# ── Tab 4: Selectivity Panel ───────────────────────────────────────────────────
+with tab4:
+    st.caption("Dock the same molecule against multiple proteins to assess selectivity.")
+
+    from utils.docking import TARGETS as ALL_TARGETS
+
+    # Off-targets relevant to each primary target
+    SELECTIVITY_SETS = {
+        "AChE — Acetylcholinesterase (Alzheimer's)": [
+            "AChE — Acetylcholinesterase (Alzheimer's)",
+            "BuChE — Butyrylcholinesterase (AChE homolog)",
+            "COX-2 — Cyclooxygenase-2 (off-target)",
+            "EGFR — Epidermal Growth Factor Receptor (Cancer)",
+        ],
+        "EGFR — Epidermal Growth Factor Receptor (Cancer)": [
+            "EGFR — Epidermal Growth Factor Receptor (Cancer)",
+            "VEGFR2 — Vascular Endothelial Growth Factor Receptor (kinase off-target)",
+            "AChE — Acetylcholinesterase (Alzheimer's)",
+            "COX-2 — Cyclooxygenase-2 (off-target)",
+        ],
+    }
+
+    panel_targets = SELECTIVITY_SETS.get(d["target"], list(ALL_TARGETS.keys()))
+    available = [t for t in panel_targets if Path(ALL_TARGETS[t]["receptor"]).exists()]
+
+    selected_panel = st.multiselect(
+        "Targets to include in panel",
+        options=available,
+        default=available,
+    )
+
+    run_panel = st.button("▶ Run Selectivity Panel", type="primary")
+
+    sel_key = f"selectivity_{d['name']}_{d['target']}"
+
+    if run_panel and selected_panel:
+        import threading, time
+        from utils.ligand import smiles_to_pdbqt
+        from utils.docking import run_docking
+
+        panel_scores = {}
+        n = len(selected_panel)
+
+        bar = st.progress(0, text="Starting panel…")
+        status = st.empty()
+
+        for i, t in enumerate(selected_panel):
+            status.markdown(f"**Docking against {t.split('—')[0].strip()}…** ({i+1}/{n})")
+            try:
+                lig = str(Path(tempfile.mkdtemp()) / "lig.pdbqt")
+                out = str(Path(tempfile.mkdtemp()) / "docked.pdbqt")
+                smiles_to_pdbqt(d["smiles"], lig)
+
+                _res = {}
+                def _dock(t=t, lig=lig, out=out):
+                    try:
+                        _res["e"] = run_docking(lig, out, target=t, exhaustiveness=exhaustiveness, n_poses=3)
+                    except Exception as e:
+                        _res["err"] = str(e)
+
+                th = threading.Thread(target=_dock); th.start()
+                t0 = time.time()
+                while th.is_alive():
+                    time.sleep(0.4)
+                    bar.progress(int((i + min((time.time()-t0)/30, 0.95)) / n * 100),
+                                 text=f"Docking {t.split('—')[0].strip()}… {time.time()-t0:.0f}s")
+                th.join()
+
+                if "e" in _res:
+                    panel_scores[t] = _res["e"][0]
+            except Exception as e:
+                panel_scores[t] = 0.0
+
+        bar.progress(100, text="✅ Panel complete!")
+        status.empty()
+        st.session_state[sel_key] = panel_scores
+
+    if sel_key in st.session_state:
+        panel_scores = st.session_state[sel_key]
+        from utils.analysis import selectivity_chart
+
+        st.image(selectivity_chart(panel_scores, d["target"]), use_container_width=True)
+
+        # Selectivity summary
+        primary_score = panel_scores.get(d["target"], 0)
+        off_scores = {k: v for k, v in panel_scores.items() if k != d["target"]}
+        if off_scores:
+            worst_off = max(off_scores.values())
+            gap = primary_score - worst_off
+            if gap < -2:
+                st.success(f"✅ **Selective** — binds primary target {abs(gap):.1f} kcal/mol stronger than best off-target")
+            elif gap < 0:
+                st.warning(f"⚠️ **Borderline** — only {abs(gap):.1f} kcal/mol gap vs. closest off-target")
+            else:
+                st.error(f"❌ **Not selective** — off-targets bind as strong or stronger than primary target")
+
+        st.subheader("Scores")
+        import pandas as pd
+        rows = [{"Target": t.split("—")[0].strip(), "Full name": t, "Score (kcal/mol)": s,
+                 "Role": "Primary target" if t == d["target"] else "Off-target"}
+                for t, s in sorted(panel_scores.items(), key=lambda x: x[1])]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("Click **Run Selectivity Panel** to dock against multiple proteins.")
