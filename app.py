@@ -1,6 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import tempfile, os
+import tempfile, os, re
 from pathlib import Path
 
 st.set_page_config(page_title="Protein–Ligand Docking", page_icon="🔬", layout="wide")
@@ -26,7 +26,6 @@ TARGET_PROTEIN_PDB = {
     "EGFR — Epidermal Growth Factor Receptor (Cancer)": "data/egfr_clean.pdb",
 }
 
-# Hydrogenated PDBs needed for ProLIF interaction detection
 TARGET_PROTEIN_H_PDB = {
     "AChE — Acetylcholinesterase (Alzheimer's)": "data/protein_ready.pdb",
     "EGFR — Epidermal Growth Factor Receptor (Cancer)": "data/egfr_ready.pdb",
@@ -45,6 +44,40 @@ TARGET_DESCRIPTIONS = {
     ),
 }
 
+# ── Name → SMILES helpers ──────────────────────────────────────────────────────
+import urllib.request, urllib.parse, urllib.error, json as _json
+
+def _try_pubchem(name):
+    url = (f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/"
+           f"{urllib.parse.quote(name)}/property/"
+           f"IsomericSMILES,IUPACName,MolecularFormula,MolecularWeight/JSON")
+    with urllib.request.urlopen(url, timeout=8) as r:
+        d = _json.loads(r.read())["PropertyTable"]["Properties"][0]
+    return d.get("IsomericSMILES",""), d.get("IUPACName", name), d.get("MolecularFormula",""), d.get("MolecularWeight","")
+
+def _try_cir(name):
+    url = f"https://cactus.nci.nih.gov/chemical/structure/{urllib.parse.quote(name)}/smiles"
+    with urllib.request.urlopen(url, timeout=8) as r:
+        return r.read().decode().strip(), name, "", ""
+
+def _try_opsin(name):
+    url = f"https://opsin.ch.cam.ac.uk/opsin/{urllib.parse.quote(name)}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = _json.loads(r.read())
+    return data.get("smiles",""), name, "", ""
+
+def name_to_smiles(name):
+    from rdkit import Chem
+    for fn, label in [(_try_pubchem, "PubChem"), (_try_cir, "NCI CIR"), (_try_opsin, "OPSIN")]:
+        try:
+            smi, iupac, formula, mw = fn(name)
+            if smi and Chem.MolFromSmiles(smi):
+                return smi, iupac, formula, mw, label
+        except Exception:
+            continue
+    return None, None, None, None, None
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("🔬 Docking Lab")
@@ -54,11 +87,29 @@ with st.sidebar:
     molecules = TARGET_MOLECULES[target]
 
     st.divider()
-    mode = st.radio("Input mode", ["Preset molecules", "Custom SMILES"])
+    mode = st.radio("Input mode", ["Preset molecules", "Search by name", "Custom SMILES"])
+
     if mode == "Preset molecules":
         selected = st.selectbox("Choose molecule", list(molecules.keys()))
         smiles = molecules[selected]
         mol_name = selected.split("(")[0].strip().lstrip("💊🎓").strip()
+
+    elif mode == "Search by name":
+        name_query = st.text_input("Compound name", placeholder="e.g. ibuprofen, erlotinib…")
+        smiles = ""
+        mol_name = name_query or "Custom molecule"
+        if name_query:
+            with st.spinner("Searching…"):
+                smi, iupac, formula, mw, source = name_to_smiles(name_query)
+            if smi:
+                smiles = smi
+                mol_name = name_query
+                st.success(f"Found via **{source}**")
+                if formula and mw:
+                    st.caption(f"{formula} · {mw} g/mol")
+            else:
+                st.error("Not found. Try the Name→SMILES tool below for complex IUPAC names.")
+
     else:
         smiles = st.text_area("SMILES", placeholder="Paste SMILES here…", height=100)
         mol_name = "Custom molecule"
@@ -81,19 +132,69 @@ with st.sidebar:
 st.title("Protein–Ligand Docking")
 st.markdown(TARGET_DESCRIPTIONS[target])
 
+# ── Name → SMILES converter ────────────────────────────────────────────────────
+with st.expander("🔤 Name → SMILES converter", expanded=False):
+    from rdkit import Chem
+    from rdkit.Chem.Draw import rdMolDraw2D
+    from rdkit.Chem import Descriptors
+    import base64
+
+    lookup_name = st.text_input(
+        "Compound name",
+        placeholder="e.g. aspirin, erlotinib, caffeine, N-[(4'-methoxy)phenyl]-3-phenyl-…",
+        key="lookup_input"
+    )
+    if lookup_name:
+        with st.spinner("Searching PubChem → NCI CIR → OPSIN…"):
+            found_smi, found_iupac, found_formula, found_mw, found_source = name_to_smiles(lookup_name)
+
+        if found_smi:
+            mol = Chem.MolFromSmiles(found_smi)
+            mw_calc = round(Descriptors.MolWt(mol), 2)
+            st.success(f"Found via **{found_source}**")
+
+            rc1, rc2 = st.columns([1, 1])
+            with rc1:
+                drawer = rdMolDraw2D.MolDraw2DSVG(340, 260)
+                drawer.drawOptions().padding = 0.15
+                drawer.DrawMolecule(mol)
+                drawer.FinishDrawing()
+                svg = drawer.GetDrawingText()
+                b64 = base64.b64encode(svg.encode()).decode()
+                st.markdown(
+                    f'<img src="data:image/svg+xml;base64,{b64}" '
+                    f'style="width:100%;border-radius:10px;border:1px solid #e2e8f0;">',
+                    unsafe_allow_html=True
+                )
+            with rc2:
+                st.markdown("**SMILES**")
+                st.code(found_smi, language=None)
+                if found_formula:
+                    st.markdown(f"**Formula:** {found_formula}")
+                st.markdown(f"**MW:** {found_mw or mw_calc} g/mol")
+                if found_iupac and found_iupac != lookup_name:
+                    st.markdown(f"**IUPAC:** {found_iupac}")
+                st.caption("Copy the SMILES above, then use **Custom SMILES** mode in the sidebar to dock it.")
+        else:
+            st.error("Not found in PubChem, NCI CIR or OPSIN. Try a slightly different name or spelling.")
+    else:
+        st.caption("Searches PubChem → NCI CIR → OPSIN in order. Works with common names, drug names, brand names, and IUPAC names.")
+
+st.divider()
+
 if not smiles:
     st.info("Select a molecule in the sidebar and click **Run Docking**.")
     st.stop()
 
 # ── 2D structure + properties ──────────────────────────────────────────────────
+from rdkit import Chem
+from rdkit.Chem.Draw import rdMolDraw2D
+import base64
+
 col1, col2 = st.columns([1, 2])
 with col1:
     st.subheader("2D Structure")
     try:
-        from rdkit import Chem
-        from rdkit.Chem.Draw import rdMolDraw2D
-        import base64
-
         mol = Chem.MolFromSmiles(smiles)
         if mol:
             drawer = rdMolDraw2D.MolDraw2DSVG(320, 240)
@@ -187,8 +288,7 @@ best = energies[0]
 st.subheader(f"Results — {d['name']}")
 
 col_a, col_b, col_c = st.columns(3)
-col_a.metric("Best binding energy", f"{best} kcal/mol",
-             help="More negative = stronger binding")
+col_a.metric("Best binding energy", f"{best} kcal/mol", help="More negative = stronger binding")
 col_b.metric("Poses found", len(energies))
 col_c.metric("Target", d["target"].split("—")[0].strip())
 
@@ -204,15 +304,14 @@ BENCHMARKS = {
 }
 
 def score_label(score):
-    if score < -10:   return "🟢 Excellent", "Stronger than most approved drugs"
-    elif score < -8:  return "🟢 Very good", "Comparable to approved drugs"
-    elif score < -6:  return "🟡 Moderate",  "Promising hit, worth optimizing"
-    elif score < -4:  return "🟠 Weak",       "Some affinity, unlikely to be active"
-    else:             return "🔴 Poor",        "Essentially no binding"
+    if score < -10:  return "🟢 Excellent", "Stronger than most approved drugs"
+    elif score < -8: return "🟢 Very good",  "Comparable to approved drugs"
+    elif score < -6: return "🟡 Moderate",   "Promising hit, worth optimizing"
+    elif score < -4: return "🟠 Weak",        "Some affinity, unlikely to be active"
+    else:            return "🔴 Poor",         "Essentially no binding"
 
 label, desc = score_label(best)
 benchmarks = BENCHMARKS.get(d["target"], [])
-best_ref = min(benchmarks, key=lambda x: x[1])[1] if benchmarks else None
 worst_ref = max(benchmarks, key=lambda x: x[1])[1] if benchmarks else None
 
 with st.expander("📖 How to read this score", expanded=True):
@@ -221,28 +320,27 @@ with st.expander("📖 How to read this score", expanded=True):
         st.markdown(f"**Your score:** `{best} kcal/mol`")
         st.markdown(f"**Rating:** {label}")
         st.markdown(f"*{desc}*")
-        if benchmarks:
+        if benchmarks and worst_ref:
             diff = best - worst_ref
             sign = "better" if diff < 0 else "weaker"
             st.markdown(f"**vs. weakest ref drug ({worst_ref}):** {abs(diff):.2f} kcal/mol {sign}")
     with ic2:
         st.markdown("**Reference scale:**")
-        scale_rows = [
-            ("< −10",  "🟢", "Excellent — stronger than most approved drugs"),
+        for rng, dot, meaning in [
+            ("< −10",     "🟢", "Excellent — stronger than most approved drugs"),
             ("−8 to −10", "🟢", "Very good — comparable to approved drugs"),
-            ("−6 to −8", "🟡", "Moderate — promising, worth optimizing"),
-            ("−4 to −6", "🟠", "Weak — unlikely to be active"),
-            ("> −4",   "🔴", "Poor — essentially no binding"),
-        ]
-        for rng, dot, meaning in scale_rows:
-            marker = "◀ **your score**" if (
-                (rng == "< −10" and best < -10) or
+            ("−6 to −8",  "🟡", "Moderate — promising, worth optimizing"),
+            ("−4 to −6",  "🟠", "Weak — unlikely to be active"),
+            ("> −4",      "🔴", "Poor — essentially no binding"),
+        ]:
+            here = (
+                (rng == "< −10"     and best < -10) or
                 (rng == "−8 to −10" and -10 <= best < -8) or
-                (rng == "−6 to −8" and -8 <= best < -6) or
-                (rng == "−4 to −6" and -6 <= best < -4) or
-                (rng == "> −4" and best >= -4)
-            ) else ""
-            st.markdown(f"{dot} `{rng}` — {meaning} {marker}")
+                (rng == "−6 to −8"  and -8  <= best < -6) or
+                (rng == "−4 to −6"  and -6  <= best < -4) or
+                (rng == "> −4"      and best >= -4)
+            )
+            st.markdown(f"{dot} `{rng}` — {meaning} {'◀ **your score**' if here else ''}")
         if benchmarks:
             st.markdown("**Approved drugs on this target:**")
             for name, score in benchmarks:
@@ -252,30 +350,26 @@ tab1, tab2, tab3 = st.tabs(["🧬 3D Viewer", "📊 Score Comparison", "🔗 Int
 
 # ── Tab 1: 3D Viewer ───────────────────────────────────────────────────────────
 with tab1:
-    st.caption("Protein = light blue cartoon · Your molecule = green sticks")
+    st.caption("Protein colored by secondary structure · Ligand = green sticks")
     try:
         protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
         with open(protein_pdb_path) as f:
             protein_str = f.read()
-
         viewer_html = f"""
         <html><head>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
         <style>body{{margin:0;background:#e8edf5;}}#v1{{width:100%;height:520px;}}</style>
-        </head><body>
-        <div id="v1"></div>
+        </head><body><div id="v1"></div>
         <script>
         let viewer = $3Dmol.createViewer('v1', {{backgroundColor:'#e8edf5'}});
         viewer.addModel(`{protein_str.replace("`","'")}`, 'pdb');
         viewer.setStyle({{model:0}}, {{cartoon:{{color:'spectrum'}}}});
         viewer.addModel(`{d["pdbqt"].replace("`","'")}`, 'pdbqt');
         viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.3}}}});
-        viewer.addSurface($3Dmol.SurfaceType.VDW, {{opacity:0.08, color:'white'}},
-                          {{model:0}});
+        viewer.addSurface($3Dmol.SurfaceType.VDW, {{opacity:0.08, color:'white'}}, {{model:0}});
         viewer.zoomTo({{model:1}});
         viewer.render();
-        </script>
-        </body></html>
+        </script></body></html>
         """
         components.html(viewer_html, height=530)
     except Exception as e:
@@ -283,8 +377,7 @@ with tab1:
 
 # ── Tab 2: Score comparison ────────────────────────────────────────────────────
 with tab2:
-    st.caption("Add more molecules via sidebar to compare scores.")
-
+    st.caption("Dock more molecules to add bars to the chart.")
     score_key = f"all_scores_{d['target']}"
     if score_key not in st.session_state:
         st.session_state[score_key] = {}
@@ -292,44 +385,38 @@ with tab2:
 
     try:
         from utils.analysis import score_chart
-        img = score_chart(st.session_state[score_key])
-        st.image(img, use_container_width=True)
+        st.image(score_chart(st.session_state[score_key]), use_container_width=True)
     except Exception as e:
         st.error(f"Chart error: {e}")
 
     st.subheader("All poses")
     import pandas as pd
-    df = pd.DataFrame({
+    st.dataframe(pd.DataFrame({
         "Pose": [f"Pose {i+1}" for i in range(len(energies))],
         "Binding energy (kcal/mol)": energies
-    })
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    }), use_container_width=True, hide_index=True)
 
 # ── Tab 3: Interactions ────────────────────────────────────────────────────────
 with tab3:
     st.caption("Hydrogen bonds, hydrophobic contacts, π-stacking and more")
-
     try:
-        import re
         from utils.analysis import get_interactions, interaction_chart
 
         h_pdb = TARGET_PROTEIN_H_PDB[d["target"]]
         with st.spinner("Calculating interactions…"):
             idf = get_interactions(h_pdb, d["out_pdbqt"], smiles=d["smiles"])
 
-        # ── 3D viewer: faint protein + interacting residues highlighted ────────
         protein_pdb_path = TARGET_PROTEIN_PDB[d["target"]]
         with open(protein_pdb_path) as f:
             protein_str = f.read()
 
-        # Parse residues like "TRP83.A" → {resi: 83, chain: "A"}
-        resi_js = "[]"
         itype_colors = {
             "HBDonor": "#60a5fa", "HBAcceptor": "#34d399",
             "Hydrophobic": "#fbbf24", "PiStacking": "#a78bfa",
             "PiCation": "#f472b6", "CationPi": "#f472b6",
             "VdWContact": "#94a3b8", "EdgeToFace": "#c084fc",
         }
+        resi_js = "[]"
         if idf is not None and not idf.empty:
             resi_list = []
             for _, row in idf.iterrows():
@@ -337,7 +424,8 @@ with tab3:
                 if m:
                     color = itype_colors.get(row["Interaction"], "#fb923c")
                     resi_list.append(
-                        f'{{resi:{m.group(1)},chain:"{m.group(2)}",color:"{color}",label:"{row["Residue"]}"}}'
+                        f'{{resi:{m.group(1)},chain:"{m.group(2)}",'
+                        f'color:"{color}",label:"{row["Residue"]}"}}'
                     )
             resi_js = "[" + ",".join(resi_list) + "]"
 
@@ -350,9 +438,7 @@ with tab3:
         setTimeout(function() {{
             let viewer = $3Dmol.createViewer('v3', {{backgroundColor:'#f1f5f9'}});
             viewer.addModel(`{protein_str.replace("`","'")}`, 'pdb');
-            // faint grey cartoon for full protein
             viewer.setStyle({{model:0}}, {{cartoon:{{color:'#c8d0dc', opacity:0.5}}}});
-            // highlight each interacting residue with its interaction color
             let residues = {resi_js};
             residues.forEach(r => {{
                 viewer.addStyle({{model:0, resi:r.resi, chain:r.chain}},
@@ -364,7 +450,6 @@ with tab3:
                     fontSize:10, borderRadius:3
                 }});
             }});
-            // ligand
             viewer.addModel(`{d["pdbqt"].replace("`","'")}`, 'pdbqt');
             viewer.setStyle({{model:1}}, {{stick:{{colorscheme:'greenCarbon', radius:0.32}}}});
             viewer.zoomTo({{model:1}});
@@ -377,8 +462,7 @@ with tab3:
         st.divider()
 
         if idf is not None and not idf.empty:
-            img = interaction_chart(idf)
-            st.image(img, use_container_width=True)
+            st.image(interaction_chart(idf), use_container_width=True)
             with st.expander(f"Raw data ({len(idf)} interactions)"):
                 st.dataframe(idf, use_container_width=True, hide_index=True)
         else:
